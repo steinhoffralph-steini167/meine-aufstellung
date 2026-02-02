@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pro Team Planner Online</title>
+    <style>
+        :root { --pitch-green: #2e7d32; --accent: #27ae60; --pool-bg: #1e1e1e; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 10px; overflow-x: hidden; }
+        
+        .controls { background: #222; padding: 15px; border-radius: 12px; width: 95%; max-width: 400px; margin-bottom: 10px; border: 1px solid #333; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        button { width: 100%; margin: 4px 0; padding: 12px; border-radius: 8px; border: none; background: var(--accent); color: white; font-weight: bold; cursor: pointer; font-size: 14px; touch-action: manipulation; }
+        .share-btn { background: #2980b9; }
+        .backup-row { display: flex; gap: 5px; margin-bottom: 10px; }
+        .backup-row button { background: #444; font-size: 11px; padding: 8px; }
+        
+        input, select { width: 100%; margin: 5px 0; padding: 10px; border-radius: 6px; border: 1px solid #444; background: #333; color: white; font-size: 16px; }
+
+        .pitch {
+            width: 340px; height: 460px; background-color: var(--pitch-green);
+            position: relative; border: 3px solid white; border-radius: 8px; overflow: hidden; touch-action: none;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+        }
+        .pitch-lines { position: absolute; width: 100%; height: 100%; pointer-events: none; opacity: 0.6; }
+        .line-mid { position: absolute; top: 50%; width: 100%; height: 2px; background: white; }
+        .circle-mid { position: absolute; top: 50%; left: 50%; width: 80px; height: 80px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); }
+
+        .pool-area {
+            width: 340px; min-height: 130px; background: var(--pool-bg);
+            margin-top: 15px; border-radius: 10px; border: 2px dashed #444;
+            display: flex; flex-wrap: wrap; justify-content: center; padding: 10px; box-sizing: border-box;
+        }
+
+        .player { width: 68px; text-align: center; cursor: grab; z-index: 10; margin: 4px; transition: filter 0.2s; }
+        .player img { width: 52px; height: 52px; border-radius: 50%; border: 2px solid white; background: #333; object-fit: cover; pointer-events: none; }
+        .player span { display: block; font-size: 10px; background: rgba(0,0,0,0.85); padding: 2px 4px; border-radius: 4px; margin-top: 2px; font-weight: bold; }
+
+        #imageModal { display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); justify-content: center; align-items: center; }
+        .modal-content { background: #222; padding: 25px; border-radius: 20px; width: 85%; max-width: 320px; text-align: center; border: 1px solid #444; }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <div class="backup-row">
+            <button onclick="exportData()">💾 Export</button>
+            <button onclick="document.getElementById('importIn').click()">📂 Import</button>
+            <input type="file" id="importIn" style="display:none" onchange="importData(this)">
+        </div>
+        <input type="text" id="newTeamName" placeholder="Team Name...">
+        <button onclick="createTeam()">Mannschaft erstellen</button>
+        <select id="teamSelector" onchange="switchTeam()"></select>
+        <button onclick="addPlayer()">+ Spieler hinzufügen</button>
+        <button class="share-btn" onclick="sharePitch()">📤 Als Bild versenden</button>
+    </div>
+
+    <div class="pitch" id="pitch">
+        <div class="pitch-lines"><div class="line-mid"></div><div class="circle-mid"></div></div>
+    </div>
+    
+    <div class="pool-area" id="pool"></div>
+
+    <div id="imageModal">
+        <div class="modal-content">
+            <h3 style="margin-top:0">Spieler-Optionen</h3>
+            <button onclick="document.getElementById('fileIn').click()">Foto vom Handy wählen</button>
+            <input type="file" id="fileIn" style="display:none" accept="image/*" onchange="handleFile(this)">
+            <button onclick="changeName()" style="background:#555; margin-top:8px;">Name ändern</button>
+            <button onclick="removePlayer()" style="background:#c0392b; margin-top:8px;">Spieler löschen</button>
+            <button onclick="closeModal()" style="background:transparent; color:#888; margin-top:15px; border:1px solid #444;">Schließen</button>
+        </div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'fb_app_v12_final';
+        let teams = JSON.parse(localStorage.getItem(STORAGE_KEY)) || { "Meine Elf": [] };
+        let currentTeam = localStorage.getItem('fb_last_team') || Object.keys(teams)[0];
+        if(!teams[currentTeam]) currentTeam = Object.keys(teams)[0];
+        let editingIndex = null;
+
+        function save() { 
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(teams)); 
+            localStorage.setItem('fb_last_team', currentTeam);
+        }
+
+        function exportData() {
+            const blob = new Blob([JSON.stringify(teams)], {type: "application/json"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a"); a.href = url; a.download = "kader_backup.json"; a.click();
+        }
+
+        function importData(input) {
+            const reader = new FileReader();
+            reader.onload = e => {
+                teams = JSON.parse(e.target.result);
+                currentTeam = Object.keys(teams)[0];
+                save(); renderAll();
+            };
+            reader.readAsText(input.files[0]);
+        }
+
+        function renderAll() {
+            const sel = document.getElementById('teamSelector');
+            sel.innerHTML = '';
+            Object.keys(teams).forEach(t => { 
+                let o = document.createElement('option'); o.value = t; o.innerText = t; 
+                if(t === currentTeam) o.selected = true; sel.appendChild(o);
+            });
+            const pitch = document.getElementById('pitch');
+            const pool = document.getElementById('pool');
+            document.querySelectorAll('.player').forEach(p => p.remove());
+            teams[currentTeam].forEach((p, index) => {
+                const div = document.createElement('div');
+                div.className = 'player';
+                div.innerHTML = `<img src="${p.img}"><span>${p.name}</span>`;
+                if (p.onPitch) {
+                    div.style.position = 'absolute'; div.style.left = p.x + 'px'; div.style.top = p.y + 'px';
+                    pitch.appendChild(div);
+                } else {
+                    div.style.position = 'relative'; pool.appendChild(div);
+                }
+                div.onmousedown = (e) => startDrag(e, index, div);
+                div.ontouchstart = (e) => startDrag(e.touches[0], index, div);
+                div.onclick = () => { editingIndex = index; openModal(); };
+            });
+        }
+
+        async function sharePitch() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 680; canvas.height = 920;
+            ctx.scale(2, 2);
+            ctx.fillStyle = "#2e7d32"; ctx.fillRect(0, 0, 340, 460);
+            ctx.strokeStyle = "white"; ctx.lineWidth = 2; ctx.strokeRect(5, 5, 330, 450);
+            ctx.beginPath(); ctx.moveTo(5, 230); ctx.lineTo(335, 230); ctx.stroke();
+            ctx.beginPath(); ctx.arc(170, 230, 40, 0, Math.PI * 2); ctx.stroke();
+            
+            for (let p of teams[currentTeam]) {
+                if (p.onPitch) {
+                    const img = new Image(); img.src = p.img;
+                    await new Promise(r => img.onload = r);
+                    ctx.save();
+                    ctx.beginPath(); ctx.arc(p.x+34, p.y+26, 25, 0, Math.PI*2); ctx.clip();
+                    ctx.drawImage(img, p.x+9, p.y+1, 50, 50);
+                    ctx.restore();
+                    ctx.fillStyle = "white"; ctx.font = "bold 10px Arial"; ctx.textAlign = "center";
+                    ctx.fillText(p.name, p.x+34, p.y+62);
+                }
+            }
+            const link = document.createElement('a'); link.download = 'aufstellung.png'; link.href = canvas.toDataURL(); link.click();
+            alert("Bild wurde gespeichert!");
+        }
+
+        function startDrag(e, index, el) {
+            const pitchRect = document.getElementById('pitch').getBoundingClientRect();
+            let moved = false;
+            const move = (ev) => {
+                moved = true;
+                let cx = ev.clientX || (ev.touches ? ev.touches[0].clientX : 0);
+                let cy = ev.clientY || (ev.touches ? ev.touches[0].clientY : 0);
+                el.style.position = 'fixed'; el.style.left = (cx - 34) + 'px'; el.style.top = (cy - 34) + 'px';
+            };
+            const stop = (ev) => {
+                document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', stop);
+                document.removeEventListener('touchmove', move); document.removeEventListener('touchend', stop);
+                if (!moved) return;
+                let cx = ev.clientX || (ev.changedTouches ? ev.changedTouches[0].clientX : 0);
+                let cy = ev.clientY || (ev.changedTouches ? ev.changedTouches[0].clientY : 0);
+                if (cx >= pitchRect.left && cx <= pitchRect.right && cy >= pitchRect.top && cy <= pitchRect.bottom) {
+                    teams[currentTeam][index].onPitch = true;
+                    teams[currentTeam][index].x = cx - pitchRect.left - 34;
+                    teams[currentTeam][index].y = cy - pitchRect.top - 34;
+                } else { teams[currentTeam][index].onPitch = false; }
+                save(); renderAll();
+            };
+            document.addEventListener('mousemove', move); document.addEventListener('mouseup', stop);
+            document.addEventListener('touchmove', move); document.addEventListener('touchend', stop);
+        }
+
+        function createTeam() { let n = document.getElementById('newTeamName').value.trim(); if(n){ if(!teams[n]) teams[n]=[]; currentTeam=n; document.getElementById('newTeamName').value=''; save(); renderAll(); } }
+        function addPlayer() { let n = prompt("Name des Spielers?"); if(n){ teams[currentTeam].push({name:n, onPitch:false, x:0, y:0, img:"https://cdn-icons-png.flaticon.com/512/1165/1165267.png"}); save(); renderAll(); } }
+        function switchTeam() { currentTeam = document.getElementById('teamSelector').value; save(); renderAll(); }
+        function openModal() { document.getElementById('imageModal').style.display='flex'; }
+        function closeModal() { document.getElementById('imageModal').style.display='none'; }
+        function handleFile(input) {
+            const reader = new FileReader();
+            reader.onload = e => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas'); canvas.width=100; canvas.height=100;
+                    canvas.getContext('2d').drawImage(img,0,0,100,100);
+                    teams[currentTeam][editingIndex].img = canvas.toDataURL('image/jpeg', 0.5);
+                    save(); renderAll(); closeModal();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
+        function changeName() { let n = prompt("Neuer Name?", teams[currentTeam][editingIndex].name); if(n){ teams[currentTeam][editingIndex].name=n; save(); renderAll(); closeModal(); } }
+        function removePlayer() { if(confirm("Löschen?")){ teams[currentTeam].splice(editingIndex,1); save(); renderAll(); closeModal(); } }
+        renderAll();
+    </script>
+</body>
+</html>
